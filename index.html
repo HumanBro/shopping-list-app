@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>쇼핑 리스트</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -167,24 +168,26 @@
 
     <ul class="list" id="list"></ul>
     <div id="empty" class="empty">아직 아이템이 없습니다.</div>
+    <div id="loading" class="empty" style="display:none;">불러오는 중...</div>
     <div id="summary" class="summary"></div>
   </div>
 
   <script>
-    let items = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    const SUPABASE_URL = 'https://irzyeekxgawwlrxwhsic.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlyenllZWt4Z2F3d2xyeHdoc2ljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA3Mzc3MDQsImV4cCI6MjA4NjMxMzcwNH0.NEGx8RQ5gzU6-DkbI25P75h4qLgZ1qvXJfVlviDM-K4';
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let items = [];
 
     const listEl = document.getElementById('list');
     const emptyEl = document.getElementById('empty');
+    const loadingEl = document.getElementById('loading');
     const summaryEl = document.getElementById('summary');
     const input = document.getElementById('itemInput');
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') addItem();
     });
-
-    function save() {
-      localStorage.setItem('shoppingList', JSON.stringify(items));
-    }
 
     function render() {
       listEl.innerHTML = '';
@@ -198,14 +201,14 @@
       emptyEl.style.display = 'none';
       summaryEl.style.display = 'block';
 
-      items.forEach((item, i) => {
+      items.forEach((item) => {
         const li = document.createElement('li');
         if (item.checked) li.classList.add('checked');
 
         li.innerHTML = `
-          <div class="checkbox" onclick="toggleCheck(${i})"></div>
+          <div class="checkbox" onclick="toggleCheck(${item.id})"></div>
           <span class="text">${escapeHtml(item.name)}</span>
-          <button class="delete-btn" onclick="deleteItem(${i})">&times;</button>
+          <button class="delete-btn" onclick="deleteItem(${item.id})">&times;</button>
         `;
         listEl.appendChild(li);
       });
@@ -220,30 +223,89 @@
       return div.innerHTML;
     }
 
-    function addItem() {
+    async function loadItems() {
+      loadingEl.style.display = 'block';
+      emptyEl.style.display = 'none';
+
+      const { data, error } = await sb
+        .from('shopping_items')
+        .select()
+        .order('created_at', { ascending: true });
+
+      loadingEl.style.display = 'none';
+
+      if (error) {
+        emptyEl.textContent = '데이터를 불러올 수 없습니다.';
+        emptyEl.style.display = 'block';
+        console.error(error);
+        return;
+      }
+
+      items = data;
+      render();
+    }
+
+    async function addItem() {
       const name = input.value.trim();
       if (!name) return;
 
-      items.push({ name, checked: false });
       input.value = '';
       input.focus();
-      save();
+
+      const { data, error } = await sb
+        .from('shopping_items')
+        .insert({ name, checked: false })
+        .select();
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      items.push(data[0]);
       render();
     }
 
-    function toggleCheck(index) {
-      items[index].checked = !items[index].checked;
-      save();
+    async function toggleCheck(id) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      const newChecked = !item.checked;
+      item.checked = newChecked;
       render();
+
+      const { error } = await sb
+        .from('shopping_items')
+        .update({ checked: newChecked })
+        .eq('id', id);
+
+      if (error) {
+        item.checked = !newChecked;
+        render();
+        console.error(error);
+      }
     }
 
-    function deleteItem(index) {
-      items.splice(index, 1);
-      save();
+    async function deleteItem(id) {
+      const index = items.findIndex(i => i.id === id);
+      if (index === -1) return;
+
+      const removed = items.splice(index, 1)[0];
       render();
+
+      const { error } = await sb
+        .from('shopping_items')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        items.splice(index, 0, removed);
+        render();
+        console.error(error);
+      }
     }
 
-    render();
+    loadItems();
     input.focus();
   </script>
 </body>
